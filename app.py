@@ -3,44 +3,16 @@ import pandas as pd
 import pdfplumber
 import docx2txt
 import joblib
-import base64
-import os
 import io
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
-
 
 st.set_page_config(page_title="Resume Job Role Predictor", layout="wide")
 
 
-def set_background(image_path: str):
-    if not os.path.exists(image_path):
-        return  # Do NOT block startup
-
-    with open(image_path, "rb") as img_file:
-        encoded_string = base64.b64encode(img_file.read()).decode()
-
-    st.markdown(
-        f"""
-        <style>
-        .stApp {{
-            background-image: url("data:image/gif;base64,{encoded_string}");
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Load background ONCE (not every rerun)
-if "bg_loaded" not in st.session_state:
-    set_background("rs.gif")
-    st.session_state.bg_loaded = True
-
-
 @st.cache_resource
 def load_model():
+    """Load the trained model and vectorizer."""
     if not os.path.exists("best_model.pkl") or not os.path.exists("vectorizer.pkl"):
         st.error("❌ Model files not found. Deployment is broken.")
         st.stop()
@@ -49,23 +21,25 @@ def load_model():
     vectorizer = joblib.load("vectorizer.pkl")
     return model, vectorizer
 
+
 model, vectorizer = load_model()
 
 
 def extract_text_from_file(uploaded_file):
+    """Extract text from PDF, DOCX, or plain text files."""
     if uploaded_file.type == "application/pdf":
         pdf_bytes = io.BytesIO(uploaded_file.read())
         with pdfplumber.open(pdf_bytes) as pdf:
-            text = "\n".join(
-                page.extract_text()
-                for page in pdf.pages
-                if page.extract_text()
-            )
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
     elif uploaded_file.type == (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ):
-        text = docx2txt.process(uploaded_file)
+        temp_path = f"temp_{uploaded_file.name}"
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        text = docx2txt.process(temp_path)
+        os.remove(temp_path)
 
     else:
         text = uploaded_file.read().decode("utf-8", errors="ignore")
@@ -74,15 +48,16 @@ def extract_text_from_file(uploaded_file):
 
 
 def predict_job_role(resume_text: str):
+    """Predict job role from resume text."""
     resume_vector = vectorizer.transform([resume_text])
     return model.predict(resume_vector)[0]
 
 
+# ---- Streamlit UI ----
 st.title("📄 Resume Job Role Predictor")
 
 uploaded_file = st.file_uploader(
-    "Upload your resume (PDF or DOCX)",
-    type=["pdf", "docx"],
+    "Upload your resume (PDF or DOCX)", type=["pdf", "docx"]
 )
 
 if uploaded_file:
